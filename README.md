@@ -6,7 +6,7 @@ Egressinator was heavily inspired by https://github.com/trustedsec/egressbuster,
 The server and client come as one package deal. 
 
 
-A note, the server will not work on windows as it relies on IP tables to redirect traffic.
+A note, the server will not work on windows as it relies on iptables to redirect traffic.
 
 # TLDR
 ```
