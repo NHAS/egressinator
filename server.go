@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func init() {
@@ -170,6 +171,8 @@ func (g *serverCommand) Run() error {
 			listener.Close()
 			return nil
 		case newConn := <-connections:
+			newConn.SetDeadline(time.Now().Add(1 * time.Second))
+
 			log.Printf("[*] Got connection from %s!\n", newConn.RemoteAddr().String())
 
 			n, err := newConn.Read(buff)
