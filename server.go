@@ -32,8 +32,6 @@ func ServerSubCommand() *serverCommand {
 		fs: flag.NewFlagSet("server", flag.ContinueOnError),
 	}
 
-	gc.fs.StringVar(&gc.address, "address", "", "External of egressbuster server (will be taken from specified interface if nothing is provided)")
-
 	gc.fs.StringVar(&gc.iface, "interface", "", "interface for server listener")
 	gc.fs.StringVar(&gc.src, "src", "", "Source address for server to listen for client requests")
 
@@ -83,10 +81,10 @@ func (g *serverCommand) Init(args []string) error {
 				}
 
 				if len(addrs) == 0 {
-					return fmt.Errorf("No local address for the server was identified")
+					return fmt.Errorf("No local address for the interface was identified")
 				}
 
-				g.address = addrs[0].String()
+				g.address = getIp(addrs[0].String())
 			}
 
 			found = true
@@ -101,6 +99,15 @@ func (g *serverCommand) Init(args []string) error {
 	return nil
 }
 
+func getIp(addr string) string {
+	for i := len(addr) - 1; i > 0; i-- {
+		if addr[i] == ':' || addr[i] == '/' {
+			return addr[:i]
+		}
+	}
+	return addr
+}
+
 func (g *serverCommand) Run() error {
 
 	if syscall.Getuid() != 0 {
@@ -111,11 +118,12 @@ func (g *serverCommand) Run() error {
 		return fmt.Errorf("Unable to find iptables in your $PATH")
 	}
 
-	log.Printf("[*] Inserting iptables rule to redirect connections from %s to **all TCP ports** to Egress Buster port %d/tcp\n", g.src, g.port)
-	err := exec.Command("iptables", "-t", "nat", "-I", "PREROUTING", "-s", g.src, "-i",
+	log.Printf("[*] Inserting iptables rule to redirect connections from %s to egressinator port %d/tcp\n", g.src, g.port)
+	output, err := exec.Command("iptables", "-t", "nat", "-I", "PREROUTING", "-s", g.src, "-i",
 		g.iface, "-p", "tcp", "--dport", "1:65535", "-j", "DNAT",
-		"--to-destination", fmt.Sprintf("%s:%d", g.address, g.port)).Run()
+		"--to-destination", fmt.Sprintf("%s:%d", g.address, g.port)).CombinedOutput()
 	if err != nil {
+		fmt.Println(string(output))
 		return fmt.Errorf("Unable to set iptables to redirect all connection attempts to egress server: %s", err)
 	}
 
@@ -134,7 +142,7 @@ func (g *serverCommand) Run() error {
 
 	signal.Notify(c, os.Interrupt)
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", g.port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", g.address, g.port))
 	if err != nil {
 		return fmt.Errorf("Unable to start listener: %s", err.Error())
 	}
