@@ -171,32 +171,34 @@ func (g *serverCommand) Run() error {
 			listener.Close()
 			return nil
 		case newConn := <-connections:
-			newConn.SetDeadline(time.Now().Add(1 * time.Second))
+			go func() {
+				newConn.SetDeadline(time.Now().Add(1 * time.Second))
 
-			log.Printf("[*] Got connection from %s!\n", newConn.RemoteAddr().String())
+				log.Printf("[*] Got connection from %s!\n", newConn.RemoteAddr().String())
 
-			n, err := newConn.Read(buff)
-			if err != nil {
-				continue
-			}
+				n, err := newConn.Read(buff)
+				if err != nil {
+					return
+				}
 
-			selfReportedPort := strings.Split(string(buff[:n]), ":")
-			if len(selfReportedPort) == 0 {
-				log.Println("\t[i] Potentially invalid, client didnt self report port")
-				continue
-			}
+				selfReportedPort := strings.Split(string(buff[:n]), ":")
+				if len(selfReportedPort) == 0 {
+					log.Println("\t[i] Potentially invalid, client didnt self report port")
+					return
+				}
 
-			if len(selfReportedPort) != 2 {
-				log.Printf("\t[i] Potentially invalid, send data, but it wasnt in the correct format '%s'\n", string(buff[:n]))
-				continue
-			}
+				if len(selfReportedPort) != 2 {
+					log.Printf("\t[i] Potentially invalid, send data, but it wasnt in the correct format '%s'\n", string(buff[:n]))
+					return
+				}
 
-			if selfReportedPort[0] != "egressor" {
-				log.Printf("\t[i] Potentially invalid, send data, but it wasnt in the correct format '%s'\n", string(buff[:n]))
-				continue
-			}
+				if selfReportedPort[0] != "egressor" {
+					log.Printf("\t[i] Potentially invalid, send data, but it wasnt in the correct format '%s'\n", string(buff[:n]))
+					return
+				}
 
-			log.Printf("[i] Client said '%s'/tcp was successful\n", selfReportedPort[1])
+				log.Printf("[i] Client said '%s'/tcp was successful\n", selfReportedPort[1])
+			}()
 
 		}
 	}
