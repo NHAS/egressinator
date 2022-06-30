@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -92,11 +93,14 @@ func (g *clientCommand) Run() error {
 	log.Printf("[i] Sending packets to egress listener (%s)...\n", g.address)
 	log.Printf("[i] Starting at: %d/tcp, ending at: %d/tcp\n", g.lowPort, g.highPort)
 
+	var wg sync.WaitGroup
 	for currentPort := g.lowPort; currentPort <= g.highPort; currentPort++ {
 		limit <- true
+		wg.Add(1)
 		go func(currentPort int) {
 			defer func() {
 				<-limit
+				wg.Done()
 			}()
 
 			if g.verbose || currentPort%1000 == 0 {
@@ -120,6 +124,8 @@ func (g *clientCommand) Run() error {
 
 		}(currentPort)
 	}
+
+	wg.Wait()
 
 	log.Println("Finished!")
 	return nil
