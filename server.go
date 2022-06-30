@@ -33,6 +33,8 @@ func ServerSubCommand() *serverCommand {
 		fs: flag.NewFlagSet("server", flag.ContinueOnError),
 	}
 
+	gc.fs.StringVar(&gc.address, "address", "", "Manually set external/interface address")
+
 	gc.fs.StringVar(&gc.iface, "interface", "", "interface for server listener")
 	gc.fs.StringVar(&gc.src, "src", "", "Source address for server to listen for client requests")
 
@@ -66,35 +68,45 @@ func (g *serverCommand) Init(args []string) error {
 		g.src = "0.0.0.0/0"
 	}
 
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return fmt.Errorf("Unable to get list of interfaces: %s", err)
-	}
+	if g.address != "" {
 
-	found := false
-	for _, iface := range ifaces {
-		if iface.Name == g.iface {
-
-			if g.address == "" {
-				addrs, err := iface.Addrs()
-				if err != nil {
-					return fmt.Errorf("No local address for the server was identified")
-				}
-
-				if len(addrs) == 0 {
-					return fmt.Errorf("No local address for the interface was identified")
-				}
-
-				g.address = getIp(addrs[0].String())
-			}
-
-			found = true
-			break
+		if net.ParseIP(g.address) == nil {
+			return fmt.Errorf("Could not parse ipaddress from " + g.address)
 		}
-	}
 
-	if !found {
-		return fmt.Errorf("Could not find interface by name of '%s', are you sure that is correct?\n", g.iface)
+	} else {
+		ifaces, err := net.Interfaces()
+		if err != nil {
+			return fmt.Errorf("Unable to get list of interfaces: %s", err)
+		}
+
+		found := false
+		for _, iface := range ifaces {
+			if iface.Name == g.iface {
+
+				if g.address == "" {
+					addrs, err := iface.Addrs()
+					if err != nil {
+						return fmt.Errorf("No local address for the server was identified")
+					}
+
+					if len(addrs) == 0 {
+						return fmt.Errorf("No local address for the interface was identified")
+					}
+
+					fmt.Println(addrs)
+
+					g.address = getIp(addrs[0].String())
+				}
+
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("Could not find interface by name of '%s', are you sure that is correct?\n", g.iface)
+		}
 	}
 
 	return nil
@@ -115,25 +127,48 @@ func (g *serverCommand) Run() error {
 		return fmt.Errorf("The server is not running as the root user, it will not be able to run iptables")
 	}
 
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("Unable to find iptables in your $PATH")
+	ipv6 := net.ParseIP(g.address).To4() == nil
+	iptablesExecutable := "iptables"
+	if ipv6 {
+		iptablesExecutable = "ip6tables"
 	}
 
-	log.Printf("[*] Inserting iptables rule to redirect connections from %s to egressinator port %d/tcp\n", g.src, g.port)
-	output, err := exec.Command("iptables", "-t", "nat", "-I", "PREROUTING", "-s", g.src, "-i",
-		g.iface, "-p", "tcp", "--dport", "1:65535", "-j", "DNAT",
-		"--to-destination", fmt.Sprintf("%s:%d", g.address, g.port)).CombinedOutput()
+	if _, err := exec.LookPath(iptablesExecutable); err != nil {
+		return fmt.Errorf("Unable to find " + iptablesExecutable + " in your $PATH")
+	}
+
+	log.Printf("[*] Inserting %s rule to redirect connections from %s to %s, egressinator port %d/tcp\n", iptablesExecutable, g.address, g.src, g.port)
+
+	output, err := exec.Command(iptablesExecutable, "-t", "filter", "-I", "INPUT", "-s", g.src, "-i",
+		g.iface, "-p", "tcp", "-m", "tcp", "--dport", fmt.Sprintf("%d", g.port), "-j", "ACCEPT").CombinedOutput()
 	if err != nil {
 		fmt.Println(string(output))
-		return fmt.Errorf("Unable to set iptables to redirect all connection attempts to egress server: %s", err)
+		return fmt.Errorf("Unable to add %s rule to allow input to port %d: %s", iptablesExecutable, g.port, err)
+	}
+
+	output, err = exec.Command(iptablesExecutable, "-t", "nat", "-I", "PREROUTING", "-s", g.src, "-i",
+		g.iface, "-p", "tcp", "--dport", "1:65535", "-j", "DNAT",
+		"--to-destination", fmt.Sprintf("%s:%d", g.address, g.port)).CombinedOutput()
+
+	if err != nil {
+		fmt.Println(string(output))
+		return fmt.Errorf("Unable to set %s to redirect all connection attempts to egress server: %s", iptablesExecutable, err)
 	}
 
 	defer func() {
-		err := exec.Command("iptables", "-t", "nat", "-D", "PREROUTING", "-s", g.src, "-i",
+
+		output, err := exec.Command(iptablesExecutable, "-t", "filter", "-D", "INPUT", "-s", g.src, "-i",
+			g.iface, "-p", "tcp", "-m", "tcp", "--dport", fmt.Sprintf("%d", g.port), "-j", "ACCEPT").CombinedOutput()
+		if err != nil {
+			fmt.Println(string(output))
+			log.Fatalf("Unable to delete %s rule to allow input to port %d: %s", iptablesExecutable, g.port, err)
+		}
+
+		err = exec.Command(iptablesExecutable, "-t", "nat", "-D", "PREROUTING", "-s", g.src, "-i",
 			g.iface, "-p", "tcp", "--dport", "1:65535", "-j", "DNAT",
 			"--to-destination", fmt.Sprintf("%s:%d", g.address, g.port)).Run()
 		if err != nil {
-			log.Fatal("Unable to delete iptables rules, you may have to do this yourself.", err)
+			log.Fatal("Unable to delete ", iptablesExecutable, " rules, you may have to do this yourself.", err)
 		}
 
 	}()
@@ -143,7 +178,11 @@ func (g *serverCommand) Run() error {
 
 	signal.Notify(c, os.Interrupt)
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", g.address, g.port))
+	network := "tcp"
+	if ipv6 {
+		network = "tcp6"
+	}
+	listener, err := net.Listen(network, fmt.Sprintf("%s:%d", g.address, g.port))
 	if err != nil {
 		return fmt.Errorf("Unable to start listener: %s", err.Error())
 	}
@@ -174,7 +213,7 @@ func (g *serverCommand) Run() error {
 			go func() {
 				newConn.SetDeadline(time.Now().Add(1 * time.Second))
 
-				log.Printf("[*] Got connection from %s!\n", newConn.RemoteAddr().String())
+				log.Printf("[*] Got connection from %s\n", newConn.RemoteAddr().String())
 
 				n, err := newConn.Read(buff)
 				if err != nil {
