@@ -18,7 +18,7 @@ go build
 # Help
 ```
 Egressinator
-Determine what ports are able to be use to egress a network
+Determine unrestricted ports that can egress the network
 Usage of client:
   -address string
         Address of egressbuster server

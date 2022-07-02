@@ -21,7 +21,7 @@ var cmds = []Runner{
 
 func help() {
 	fmt.Println("Egressinator")
-	fmt.Println("Determine what ports are able to be use to egress a network")
+	fmt.Println("Determine unrestricted ports that can egress the network")
 
 	for _, r := range cmds {
 		r.PrintUsage()
