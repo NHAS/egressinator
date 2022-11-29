@@ -10,7 +10,7 @@ A note, the server will not work on windows as it relies on iptables to redirect
 
 # TLDR
 ```
-git clone https://github.com/trustedsec/egressbuster
+git clone https://github.com/NHAS/egressinator.git
 cd egressbuster
 go build
 ```
